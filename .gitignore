@@ -1,0 +1,5 @@
+.build/
+GDriveMenuBar.app/
+*.o
+*.d
+.DS_Store
