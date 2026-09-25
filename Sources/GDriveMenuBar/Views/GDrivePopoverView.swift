@@ -12,10 +12,8 @@ final class GDriveStore: ObservableObject {
     private static var authRequested = false
 
     func refresh(forceCapacity: Bool = false) {
-        if forceCapacity { GDriveService.refreshCapacity() }
         Task.detached(priority: .userInitiated) {
-            var snap = GDriveService.snapshot()
-            if forceCapacity { snap.cap = GDriveService.driveCapacity(forceRefresh: true) }
+            let snap = GDriveService.snapshot(forceCapacity: forceCapacity)
             let line = snap.cap.available
                 ? String(format: "Drive %.1f GiB / %.0f%% · %@", snap.cap.usedGB, snap.cap.usedPct, snap.state)
                 : "Drive capacity unavailable · \(snap.state)"
@@ -32,7 +30,7 @@ final class GDriveStore: ObservableObject {
         }
     }
 
-    func act(_ name: String, _ work: @escaping @Sendable () -> Void) {
+    func act(_ work: @escaping @Sendable () -> Void) {
         Task.detached(priority: .userInitiated) {
             work()
             await MainActor.run { self.refresh() }
@@ -130,7 +128,7 @@ struct GDrivePopoverView: View {
                 MetricRow(label: "Used", value: String(format: "%.1f GiB", store.snap.mac.usedGB), color: TBTheme.gray)
                 MetricRow(label: "Staging Trash", value: store.snap.mac.stagingTrash, color: TBTheme.orange)
                 HStack {
-                    Button("Empty Staging Trash") { store.act("purge") { GDriveService.purgeStagingTrash() } }
+                    Button("Empty Staging Trash") { store.act { GDriveService.purgeStagingTrash() } }
                         .buttonStyle(.link).font(.caption).foregroundStyle(.red)
                     Spacer()
                     Button("Refresh metrics") { store.refresh(forceCapacity: true) }
@@ -151,7 +149,7 @@ struct GDrivePopoverView: View {
                 MetricRow(label: "Reclaimable", value: reclaimString, color: TBTheme.green)
                 MetricRow(label: "Last audit", value: store.snap.audit.lastUpdated ?? "—", color: TBTheme.gray)
                 HStack {
-                    Button("Empty Drive bin") { store.act("bin") { GDriveService.purgeCloudBin() } }
+                    Button("Empty Drive bin") { store.act { GDriveService.purgeCloudBin() } }
                         .buttonStyle(.link).font(.caption).foregroundStyle(.red)
                     Spacer()
                     Button("Open Drive trash") { NSWorkspace.shared.open(URL(string: "https://drive.google.com/drive/trash")!) }
@@ -250,10 +248,10 @@ struct GDrivePopoverView: View {
                           color: store.snap.mounted ? TBTheme.green : TBTheme.orange)
                 HStack {
                     if store.snap.mounted {
-                        Button("Unmount CloudDrive") { store.act("unmount") { GDriveService.unmountCloudDrive() } }
+                        Button("Unmount CloudDrive") { store.act { GDriveService.unmountCloudDrive() } }
                             .buttonStyle(.link).font(.caption).foregroundStyle(.orange)
                     } else {
-                        Button("Mount CloudDrive") { store.act("mount") { GDriveService.mountCloudDrive() } }
+                        Button("Mount CloudDrive") { store.act { GDriveService.mountCloudDrive() } }
                             .buttonStyle(.link).font(.caption).foregroundStyle(TBTheme.green)
                     }
                     Spacer()
@@ -262,7 +260,7 @@ struct GDrivePopoverView: View {
                     }.buttonStyle(.link).font(.caption)
                 }
                 if store.snap.running {
-                    Button("Stop uploads") { store.act("stop") { GDriveService.stopUploads() } }
+                    Button("Stop uploads") { store.act { GDriveService.stopUploads() } }
                         .buttonStyle(.link).font(.caption).foregroundStyle(.red)
                 }
             }

@@ -23,7 +23,7 @@ enum GDriveHistory {
         guard !line.isEmpty else { return }
         if FileManager.default.fileExists(atPath: file.path) {
             if let fh = try? FileHandle(forWritingTo: file) {
-                try? fh.seekToEnd()
+                _ = try? fh.seekToEnd()
                 try? fh.write(contentsOf: Data(line.utf8))
                 try? fh.close()
             }
@@ -36,7 +36,6 @@ enum GDriveHistory {
     /// Last 14 days as (day label, peak pct), oldest → newest.
     static func dailyPeaks(days: Int = 14) -> [(String, Double)] {
         guard let text = try? String(contentsOf: file) else { return [] }
-        let cal = Calendar.current
         var peak: [String: Double] = [:]
         var order: [String] = []
         let fmt = DateFormatter()

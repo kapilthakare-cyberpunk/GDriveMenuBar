@@ -24,11 +24,10 @@ final class GDriveStatusController {
         store.refresh()
         updateTitle()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.store.refresh()
-            Task { @MainActor in self?.updateTitle() }
-        }
-        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateTitle() }
+            Task { @MainActor in
+                self?.store.refresh()
+                self?.updateTitle()
+            }
         }
         debug("started pid=\(ProcessInfo.processInfo.processIdentifier)")
     }
@@ -50,6 +49,7 @@ final class GDriveStatusController {
     }
 
     private func debug(_ msg: String) {
+        guard ProcessInfo.processInfo.environment["GDRIVE_DEBUG"] != nil else { return }
         let line = "[GDriveMenuBar] \(msg)\n"
         if let fh = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/GDriveMenuBar.debug.log")) {
             _ = try? fh.seekToEnd()

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Native mirror of gdrive_manager.10s.py data layer.
 /// Shares /tmp/gdrive_about_cache.json with the SwiftBar plugin.
@@ -13,11 +14,11 @@ enum GDriveService {
 
     // MARK: - Snapshot
 
-    static func snapshot() -> GDriveSnapshot {
+    static func snapshot(forceCapacity: Bool = false) -> GDriveSnapshot {
         var snap = GDriveSnapshot()
         snap.running = isRcloneRunning()
         snap.mounted = isMounted()
-        snap.cap = driveCapacity()
+        snap.cap = driveCapacity(forceRefresh: forceCapacity)
         snap.mac = macAudit()
         snap.audit = auditData()
         snap.immich = immichStatus()
@@ -42,15 +43,39 @@ enum GDriveService {
         p.standardError = FileHandle.nullDevice
         do {
             try p.run()
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if p.isRunning { p.terminate() }
-            }
-            p.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return (String(data: data, encoding: .utf8) ?? "", p.terminationStatus)
         } catch {
             return ("", -1)
         }
+        // Drain the pipe concurrently: waiting for exit first would deadlock
+        // as soon as the child writes more than the pipe buffer.
+        let box = OutputBox()
+        let readDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            box.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            readDone.signal()
+        }
+        let exited = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            p.waitUntilExit()
+            exited.signal()
+        }
+        // Escalate to SIGKILL so a child ignoring SIGTERM can't hang us forever.
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            p.terminate()
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                kill(p.processIdentifier, SIGKILL)
+            }
+        }
+        _ = readDone.wait(timeout: .now() + 2)
+        return (String(data: box.data, encoding: .utf8) ?? "", p.terminationStatus)
+    }
+
+    private final class OutputBox: @unchecked Sendable {
+        var data = Data()
+    }
+
+    private final class ProbeResult: @unchecked Sendable {
+        var reachable = false
     }
 
     private static func binary(_ name: String) -> String? {
@@ -119,10 +144,6 @@ enum GDriveService {
         if let data = try? JSONSerialization.data(withJSONObject: payload) {
             fm.createFile(atPath: cacheFile, contents: data)
         }
-    }
-
-    static func refreshCapacity() {
-        try? fm.removeItem(atPath: cacheFile)
     }
 
     // MARK: - Mac audit
@@ -204,19 +225,19 @@ enum GDriveService {
     // MARK: - Immich
 
     static func immichStatus() -> ImmichStatus {
-        var st = ImmichStatus()
+        let st = ImmichStatus()
         guard let url = URL(string: "http://localhost:2283") else { return st }
         var req = URLRequest(url: url)
         req.timeoutInterval = 2
         req.httpMethod = "HEAD"
-        var reachable = false
+        let probe = ProbeResult()
         let sem = DispatchSemaphore(value: 0)
         URLSession.shared.dataTask(with: req) { _, resp, _ in
-            reachable = (resp as? HTTPURLResponse)?.statusCode == 200
+            probe.reachable = (resp as? HTTPURLResponse)?.statusCode == 200
             sem.signal()
         }.resume()
         _ = sem.wait(timeout: .now() + 3)
-        guard reachable else { return st }
+        guard probe.reachable else { return st }
         guard let docker = binary("docker") else {
             return ImmichStatus(status: "Online (probe only)", assets: "?", online: false)
         }
